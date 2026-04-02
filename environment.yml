@@ -1,0 +1,45 @@
+name: uav-tracker
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # ── Core Python ───────────────────────────────────
+  - python=3.11
+
+  # ── Scientific stack (conda-managed for C bindings) ─
+  - numpy>=1.24
+  - scipy>=1.11
+  - matplotlib>=3.7
+  - pandas>=2.0
+
+  # ── Computer Vision ───────────────────────────────
+  - opencv>=4.8          # conda-forge build includes ffmpeg
+
+  # ── Jupyter ───────────────────────────────────────
+  - jupyterlab>=4.0
+  - ipykernel
+  - ipywidgets
+
+  # ── Utilities ─────────────────────────────────────
+  - tqdm
+  - pyyaml
+  - pillow
+  - seaborn
+
+  # ── Dev & testing ─────────────────────────────────
+  - pytest
+  - black
+  - isort
+
+  # ── pip-only packages ─────────────────────────────
+  - pip
+  - pip:
+    - albumentations>=1.3
+    - ultralytics>=8.0
+    - filterpy          # Kalman filter — used by DeepSORT
+    - lap               # linear assignment — used by ByteTrack
+    - motmetrics        # MOTA / IDF1 computation
+    - gdown             # Google Drive dataset downloads (Phase 2)
+    - nbstripout        # strip notebook outputs before git commit
