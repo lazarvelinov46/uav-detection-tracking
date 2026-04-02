@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────
+# DATASETS & OUTPUTS — never commit these
+# ─────────────────────────────────────────
+data/
+outputs/
+
+# ─────────────────────────────────────────
+# PYTHON
+# ─────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+lib/
+lib64/
+*.so
+.installed.cfg
+MANIFEST
+
+# ─────────────────────────────────────────
+# VIRTUAL ENVS & CONDA
+# ─────────────────────────────────────────
+env/
+venv/
+.venv/
+ENV/
+.conda/
+*.conda
+
+# ─────────────────────────────────────────
+# JUPYTER NOTEBOOKS
+# ─────────────────────────────────────────
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+# Strip outputs from notebooks before committing
+# (use nbstripout — configured below)
+
+# ─────────────────────────────────────────
+# MODEL WEIGHTS & CHECKPOINTS
+# ─────────────────────────────────────────
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.onnx
+*.engine
+*.trt
+
+# ─────────────────────────────────────────
+# ULTRALYTICS RUNS
+# ─────────────────────────────────────────
+runs/
+
+# ─────────────────────────────────────────
+# LOGS & PROFILING
+# ─────────────────────────────────────────
+*.log
+*.csv
+wandb/
+mlruns/
+lightning_logs/
+tensorboard/
+
+# ─────────────────────────────────────────
+# VIDEO & IMAGE FILES
+# ─────────────────────────────────────────
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tiff
+*.gif
+
+# ─────────────────────────────────────────
+# OS & EDITOR NOISE
+# ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
