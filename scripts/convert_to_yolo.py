@@ -78,6 +78,22 @@ def parse_mot_label(label_path: Path):
 
     return frames
 
+
+def write_yolo_labels(frames: dict, output_seq_dir: Path, max_frame: int):
+    """
+    Writes one .txt file per frame into output_seq_dir.
+    Frames with no annotations get an empty file (valid for YOLO).
+    Files are named by zero-padded frame number e.g. 000001.txt
+    """
+    output_seq_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write all frames from 1 to max_frame
+    for frame_id in range(1, max_frame + 1):
+        out_path = output_seq_dir / f"{frame_id:06d}.txt"
+        annotations = frames.get(frame_id, [])  # empty list if no UAVs this frame
+        out_path.write_text("\n".join(annotations))
+
+
 def main():
     args = parse_args()
     data_root  = Path(args.data_root)
@@ -95,7 +111,19 @@ def main():
     print(f"\n  Input  : {labels_dir}")
     print(f"  Output : {output_dir}")
     print(f"  Sequences to convert: {len(label_files)}")
+    print()
 
+    for label_path in label_files:
+        seq_name = label_path.stem  # e.g. "MultiUAV-002"
+        frames   = parse_mot_label(label_path)
+        max_frame = max(frames.keys())
+
+        output_seq_dir = output_dir / seq_name
+        write_yolo_labels(frames, output_seq_dir, max_frame)
+
+        print(f"  [DONE] {seq_name}  frames={max_frame}  tracks_in_labels={len(frames)}")
+
+    print("\n  Conversion complete.")
 
 if __name__ == "__main__":
     main()
