@@ -22,15 +22,26 @@ def get_train_transforms():
         # Horizontal flip — most common and safest augmentation
         A.HorizontalFlip(p=0.5),
 
-        # Small rotations only — large rotations push tiny UAVs off frame
-        A.Rotate(limit=10, p=0.3),
-
         # Slight zoom in/out — min_visibility drops boxes that become too small
         A.RandomScale(scale_limit=0.15, p=0.3),
 
-        # Random crop that preserves at least 90% of the image area
-        # Keeps small objects from being cropped out entirely
-        A.RandomSizedBBoxSafeCrop(height=512, width=640, p=0.3),
+
+        # replaces RandomSizedBBoxSafeCrop
+        # Old
+        # A.ShiftScaleRotate(
+        #     shift_limit=0.05,   # translate up to 5% of image size
+        #     scale_limit=0.15,   # zoom in/out up to 15%
+        #     rotate_limit=10,    # rotate up to 10 degrees
+        #     p=0.3
+        # ),
+
+        # replaces RandomSizedBBoxSafeCrop
+        A.Affine(
+            translate_percent=0.05, # translate up to 5% of image size
+            scale=(0.85, 1.15),     # zoom in/out up to 15%
+            rotate=(-10, 10),       # rotate up to 10 degrees
+            p=0.3
+        ),
 
         # ── Intensity transforms ──────────────────────────
         # IR imagery has no color — these operate on pixel intensity only
@@ -41,7 +52,10 @@ def get_train_transforms():
         ),
 
         # Simulates sensor noise — teaches model to detect under noisy conditions
-        A.GaussNoise(var_limit=(5.0, 20.0), p=0.3),
+        # Old
+        # A.GaussNoise(var_limit=(5.0, 20.0), p=0.3),
+        A.GaussNoise(std_range=(0.02, 0.08), p=0.3),
+
 
         # Slight blur — simulates atmospheric haze or focus variation
         A.GaussianBlur(blur_limit=(3, 5), p=0.2),
@@ -58,9 +72,11 @@ def get_val_transforms():
     Validation pipeline — no augmentation, format only.
     Keeps validation deterministic and comparable across runs.
     """
-    return A.Compose([],
-        bbox_params=A.BboxParams(
-            format="yolo",
-            min_visibility=0.3,
-            label_fields=["labels"]
-        ))
+    return A.Compose([
+        A.NoOp()  # keeps bbox_params processor happy with no actual transformation
+    ],
+    bbox_params=A.BboxParams(
+        format="yolo",
+        min_visibility=0.3,
+        label_fields=["labels"]
+    ))
