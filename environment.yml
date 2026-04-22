@@ -42,4 +42,3 @@ dependencies:
     - lap               # linear assignment — used by ByteTrack
     - motmetrics        # MOTA / IDF1 computation
     - gdown             # Google Drive dataset downloads (Phase 2)
-    - nbstripout        # strip notebook outputs before git commit

@@ -39,8 +39,6 @@ ENV/
 # ─────────────────────────────────────────
 .ipynb_checkpoints/
 */.ipynb_checkpoints/
-# Strip outputs from notebooks before committing
-# (use nbstripout — configured below)
 
 # ─────────────────────────────────────────
 # MODEL WEIGHTS & CHECKPOINTS
@@ -59,28 +57,21 @@ ENV/
 runs/
 
 # ─────────────────────────────────────────
-# LOGS & PROFILING
+# LOGS
 # ─────────────────────────────────────────
 *.log
-*.csv
 wandb/
 mlruns/
 lightning_logs/
 tensorboard/
 
 # ─────────────────────────────────────────
-# VIDEO & IMAGE FILES
+# VIDEO FILES
 # ─────────────────────────────────────────
 *.mp4
 *.avi
 *.mov
 *.mkv
-*.jpg
-*.jpeg
-*.png
-*.bmp
-*.tiff
-*.gif
 
 # ─────────────────────────────────────────
 # OS & EDITOR NOISE
