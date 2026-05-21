@@ -6,9 +6,12 @@ Thin wrapper around the canonical BYTETracker, exposing a clean
 YOLOX-era `img_info`/`img_size` plumbing we don't need (Ultralytics
 already returns boxes in original-image coordinates).
 
-One wrapper instance tracks one sequence. Create a fresh wrapper for
-each new sequence so the tracker's internal state (active and lost
-tracks, frame counter) resets cleanly.
+Dataset-agnostic: BYTETracker's internal rescaling is disabled
+unconditionally (see _SCALE_DISABLE below), so no image-size
+configuration is required.
+
+One wrapper instance tracks one sequence. Create a fresh wrapper
+per sequence so the tracker's internal state resets cleanly.
 """
 
 from dataclasses import dataclass
@@ -17,6 +20,13 @@ from types import SimpleNamespace
 import numpy as np
 
 from .byte_tracker import BYTETracker
+
+
+# Passing img_info == img_size to BYTETracker yields scale = 1 regardless
+# of the tuple's contents (scale = min(img_size[0]/img_info[0],
+# img_size[1]/img_info[1]) = 1 when the tuples are equal). The values
+# below are arbitrary — they only need to match each other.
+_SCALE_DISABLE = (1, 1)
 
 
 @dataclass
@@ -40,19 +50,14 @@ class ByteTrackWrapper:
             High-conf feed first-stage association; low-conf feed the
             second-stage association unique to ByteTrack.
         track_buffer : int, default 30
-            Frames to remember a lost track before removing it. At
-            frame_rate=30 this is 1 second of "lost" tolerance.
+            Frames to remember a lost track before removing it.
         match_thresh : float, default 0.8
             IoU threshold for first-stage detection-to-track matching.
         mot20 : bool, default False
             Crowded-scene mode (disables score-fusion in first
-            association). Worth trying True later given our dense regime.
+            association). Worth trying True later for our dense regime.
         frame_rate : int, default 30
-            Used internally to scale track_buffer.
-        img_size : (H, W), default (512, 640)
-            Image height and width in pixels. We pass img_info == img_size
-            to BYTETracker so its internal scale factor is 1 (i.e., no
-            rescaling — Ultralytics already gives original-image coords).
+            Used internally to scale track_buffer to time-based units.
     """
 
     def __init__(
@@ -62,7 +67,6 @@ class ByteTrackWrapper:
         match_thresh: float = 0.8,
         mot20: bool         = False,
         frame_rate: int     = 30,
-        img_size: tuple     = (512, 640),
     ):
         args = SimpleNamespace(
             track_thresh=track_thresh,
@@ -70,8 +74,7 @@ class ByteTrackWrapper:
             match_thresh=match_thresh,
             mot20=mot20,
         )
-        self.tracker  = BYTETracker(args, frame_rate=frame_rate)
-        self.img_size = img_size
+        self.tracker = BYTETracker(args, frame_rate=frame_rate)
 
     def update(self, detections: np.ndarray) -> list:
         """
@@ -83,8 +86,8 @@ class ByteTrackWrapper:
         Parameters
         ----------
         detections : np.ndarray
-            (N, 5) array of [x1, y1, x2, y2, conf] in original-image
-            pixels. For empty frames pass np.empty((0, 5)).
+            (N, 5) array of [x1, y1, x2, y2, conf] in image pixels.
+            For empty frames pass np.empty((0, 5)).
 
         Returns
         -------
@@ -102,11 +105,10 @@ class ByteTrackWrapper:
                     f"[x1, y1, x2, y2, conf]; got {detections.shape}"
                 )
 
-        # img_info == img_size -> scale = 1 (no rescaling needed).
         active_stracks = self.tracker.update(
             detections,
-            img_info=self.img_size,
-            img_size=self.img_size,
+            img_info=_SCALE_DISABLE,
+            img_size=_SCALE_DISABLE,
         )
 
         return [
