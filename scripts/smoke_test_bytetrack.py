@@ -3,25 +3,30 @@ scripts/smoke_test_bytetrack.py
 
 Smoke test for the ByteTrack wrapper.
 
-Reads detections from one val sequence's MOT-format detection file
-(produced by run_detection_inference.py), feeds them through the
-ByteTrackWrapper frame by frame, and prints the track outputs for
-the first few frames. Verifies:
+Reads detections from one val sequence's MOT-format detection file,
+feeds them through the ByteTrackWrapper frame by frame, and prints
+the track outputs for the first few frames. Verifies:
   - The wrapper instantiates and runs.
   - Track IDs are assigned on frame 1.
-  - Track IDs are preserved across consecutive frames (the whole
-    point of tracking).
+  - Track IDs are preserved across consecutive frames.
 """
 
 import torch  # CRITICAL on Windows: must precede numpy in import chain
 
+import sys
 from pathlib import Path
+
+# Make `from src.tracking...` resolve when this script is run directly.
+# Robust to where the script is invoked from (doesn't depend on cwd).
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 import numpy as np
 
 from src.tracking.bytetrack.wrapper import ByteTrackWrapper
 
 
-DETECTIONS_PATH    = Path("data/processed/detections/yolov8s_baseline/MultiUAV-002.txt")
+DETECTIONS_PATH    = PROJECT_ROOT / "data/processed/detections/yolov8s_baseline/MultiUAV-002.txt"
 NUM_FRAMES_TO_SHOW = 3
 
 
@@ -64,7 +69,6 @@ def main():
         track_buffer=30,
         match_thresh=0.8,
         mot20=False,
-        img_size=(512, 640),
     )
     print("\n  Tracker created  : track_thresh=0.5, buffer=30, match=0.8, mot20=False")
 
@@ -85,7 +89,7 @@ def main():
 
     # Cross-frame ID continuity check
     if len(seen_ids_per_frame) >= 2:
-        carried = seen_ids_per_frame[0] & seen_ids_per_frame[1]
+        carried  = seen_ids_per_frame[0] & seen_ids_per_frame[1]
         new_in_2 = seen_ids_per_frame[1] - seen_ids_per_frame[0]
         print(f"\n  ID continuity 1->2 : {len(carried)} carried, {len(new_in_2)} new")
 
