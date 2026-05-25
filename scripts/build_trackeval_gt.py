@@ -54,7 +54,8 @@ def main():
                     help="dir of raw MOT GT files named <seq>.txt")
     ap.add_argument("--img-dir", default="D:/uav-tracker-data/anti_uav_v4/images/val",
                     help="val frames, used to count seqLength")
-    ap.add_argument("--trackeval-root", default="TrackEval", help="cloned TrackEval repo root")
+    ap.add_argument("--gt-folder", default="data/eval/gt",
+                    help="TrackEval GT_FOLDER: holds <benchmark>-<split>/ and seqmaps/")
     ap.add_argument("--benchmark", default="AntiUAV")
     ap.add_argument("--split", default="val")
     ap.add_argument("--frame-rate", type=int, default=30)
@@ -64,8 +65,8 @@ def main():
 
     det_dir, gt_src, img_dir = Path(args.det_dir), Path(args.gt_src), Path(args.img_dir)
     gt_set = f"{args.benchmark}-{args.split}"
-    mot = Path(args.trackeval_root) / "data" / "gt" / "mot_challenge"
-    gt_root, seqmap_dir = mot / gt_set, mot / "seqmaps"
+    gt_folder = Path(args.gt_folder)
+    gt_root, seqmap_dir = gt_folder / gt_set, gt_folder / "seqmaps"
 
     seqs = sorted(f.stem for f in det_dir.glob("*.txt"))
     if not seqs:
