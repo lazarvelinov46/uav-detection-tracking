@@ -14,18 +14,30 @@ coordinates to the CURRENT frame's image coordinates:
     [x']   [ a  b ] [x]   [tx]
     [y'] = [ c  d ] [y] + [ty]
 
-It will be consumed by STrack.multi_gmc (a later task) to warp each
-track's Kalman state into the new frame before IoU association, so a
-camera pan no longer destroys the predicted-box / detection overlap.
+It is consumed by multi_gmc (defined below) to warp each track's
+Kalman state into the new frame before IoU association, so a camera
+pan no longer destroys the predicted-box / detection overlap.
 
 Design choices for the Anti-UAV v4 thermal-IR regime (~11px boxes):
-  - Detection boxes are masked out before feature extraction, so the
-    estimate reflects BACKGROUND (camera) motion, not UAV motion -- the
-    UAVs are the one thing moving independently of the camera.
+  - CLAHE preprocessing on by default. Thermal IR has decent global
+    dynamic range (std ~40) but its CONTRAST is spatially concentrated
+    -- the sharpest corners cluster on the UAVs themselves. CLAHE
+    spreads contrast locally so smoother regions (clouds, terrain)
+    become discriminable to FAST.
+  - FAST threshold lowered from OpenCV's default 20 to 7. With the
+    default, ORB on thermal returns features almost exclusively where
+    YOLOv8s also fired -- meaning the detection mask wipes ALL of them.
+  - Conf-filtered masking: only mask detection boxes with conf >= 0.5
+    by default. At permissive detector thresholds (conf=0.1), many
+    "detections" are FPs on background features; masking them removes
+    exactly the anchors GMC needs. A handful of unmasked real UAVs are
+    handled by RANSAC as outliers.
+  - Detection boxes are still masked out (above the conf threshold),
+    so the estimate reflects BACKGROUND motion, not UAV motion.
   - Graceful identity fallback: on the first frame, or whenever too few
-    inliers are found (e.g. low-texture sky), apply() returns the
-    identity transform -> no compensation that frame, never a garbage
-    warp that would corrupt every track.
+    inliers are found, apply() returns the identity transform -> no
+    compensation that frame, never a garbage warp that would corrupt
+    every track.
   - Per-call diagnostics (keypoints / matches / inliers / fallback) are
     stored on .last_stats so the runner can log when an estimate is weak.
 
@@ -55,28 +67,34 @@ class GMC:
         min_matches: int = 10,
         min_inliers: int = 6,
         det_mask_margin: float = 0.0,
+        # -- thermal-IR-tuned options ---------------------------------
+        use_clahe: bool = True,
+        clahe_clip_limit: float = 2.0,
+        clahe_tile_grid_size: tuple = (8, 8),
+        fast_threshold: int = 7,
+        mask_conf_threshold: float = 0.5,
     ):
         """
         Parameters
         ----------
-        downscale : int
-            Factor to shrink frames before feature work (speed). The
-            linear (rotation/scale) block is scale-invariant; only the
-            translation is rescaled back to full resolution.
-        n_features : int
-            Max ORB keypoints per frame.
-        ratio : float
-            Lowe ratio-test threshold for accepting a KNN match.
-        ransac_reproj_thresh : float
-            RANSAC inlier threshold in pixels (downscaled space).
-        min_matches : int
-            Minimum good matches required to even attempt a fit.
-        min_inliers : int
-            Minimum RANSAC inliers required to trust the fit; below this
-            we fall back to identity.
-        det_mask_margin : float
-            Fractional padding around each detection box when masking
-            (0.0 = exact box; 0.5 = box grown 50% each side).
+        downscale, n_features, ratio, ransac_reproj_thresh,
+        min_matches, min_inliers, det_mask_margin
+            See module docstring; unchanged from previous versions.
+        use_clahe : bool
+            Apply CLAHE local-contrast preprocessing before ORB.
+            Default True (essential for thermal IR per diagnostics).
+        clahe_clip_limit, clahe_tile_grid_size
+            CLAHE parameters; defaults are OpenCV-standard.
+        fast_threshold : int
+            FAST corner threshold inside ORB. OpenCV default is 20,
+            which is too aggressive for low-local-contrast scenes.
+            Default 7 surfaces background features without flooding
+            ORB with noise.
+        mask_conf_threshold : float
+            Minimum detection confidence for a box to be masked out.
+            Default 0.5 -- conservative; biases toward keeping
+            background features rather than masking them via low-conf
+            false-positive detections.
         """
         self.downscale = max(1, int(downscale))
         self.ratio = ratio
@@ -84,9 +102,18 @@ class GMC:
         self.min_matches = min_matches
         self.min_inliers = min_inliers
         self.det_mask_margin = det_mask_margin
+        self.mask_conf_threshold = mask_conf_threshold
 
-        self.detector = cv2.ORB_create(nfeatures=n_features)
+        self.detector = cv2.ORB_create(
+            nfeatures=n_features, fastThreshold=fast_threshold
+        )
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
+
+        self.use_clahe = use_clahe
+        self.clahe = (
+            cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=clahe_tile_grid_size)
+            if use_clahe else None
+        )
 
         self._prev_kpts = None
         self._prev_desc = None
@@ -106,16 +133,25 @@ class GMC:
         return frame
 
     def _build_mask(self, shape, detections) -> np.ndarray:
-        """255 everywhere except inside (margin-expanded) detection boxes,
-        which are zeroed so ORB ignores the UAVs. `detections` is full-res
-        [x1,y1,x2,y2,...]; coordinates are scaled into downscaled space."""
+        """255 everywhere except inside (margin-expanded) detection boxes
+        whose confidence meets mask_conf_threshold. Coordinates are
+        scaled from full-res into downscaled space."""
         h, w = shape
         mask = np.full((h, w), 255, dtype=np.uint8)
         if detections is None or len(detections) == 0:
             return mask
+
+        dets = np.asarray(detections, dtype=np.float32)
+        # If a confidence column is present, drop low-conf boxes so they
+        # don't mask out background features they likely landed on.
+        if dets.shape[1] >= 5:
+            dets = dets[dets[:, 4] >= self.mask_conf_threshold]
+            if len(dets) == 0:
+                return mask
+
         s = self.downscale
         m = self.det_mask_margin
-        for x1, y1, x2, y2 in np.asarray(detections, dtype=np.float32)[:, :4]:
+        for x1, y1, x2, y2 in dets[:, :4]:
             bw, bh = (x2 - x1), (y2 - y1)
             xi1 = max(0, int(np.floor((x1 - m * bw) / s)))
             yi1 = max(0, int(np.floor((y1 - m * bh) / s)))
@@ -136,8 +172,10 @@ class GMC:
         frame : np.ndarray
             HxWx3 (BGR) or HxW grayscale current frame, FULL resolution.
         detections : np.ndarray or None
-            (N, 4+) array of [x1, y1, x2, y2, ...] in FULL-res pixels,
-            masked out before feature extraction. None -> no mask.
+            (N, 4+) array of [x1, y1, x2, y2, ...] in FULL-res pixels.
+            If a 5th column is present, it is interpreted as detection
+            confidence and only boxes with conf >= mask_conf_threshold
+            are masked out. None -> no mask.
 
         Returns
         -------
@@ -153,6 +191,8 @@ class GMC:
                 (gray.shape[1] // self.downscale, gray.shape[0] // self.downscale),
                 interpolation=cv2.INTER_AREA,
             )
+        if self.use_clahe:
+            gray = self.clahe.apply(gray)
 
         mask = self._build_mask(gray.shape, detections)
         kpts, desc = self.detector.detectAndCompute(gray, mask)

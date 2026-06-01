@@ -9,13 +9,14 @@ from which the camera-motion affine is estimated.
 What this wrapper composes:
   - BYTETrackerCMC : ByteTrack with multi_gmc injected into multi_predict
                      (see cmc_tracker.py); wraps the vendored BYTETracker.
-  - GMC            : ORB + Lowe + RANSAC affine estimator with detection
-                     masking and identity fallback (see gmc.py).
+  - GMC            : ORB + Lowe + RANSAC affine estimator with CLAHE
+                     preprocessing, conf-filtered detection masking,
+                     and identity fallback (see gmc.py).
 
 Per frame:
   1. GMC estimates the affine H from the previous frame to this frame,
-     masking out the detection boxes so the estimate reflects camera/
-     background motion rather than UAV motion.
+     masking out high-confidence detection boxes so the estimate
+     reflects camera/background motion rather than UAV motion.
   2. The tracker is fed (detections, H); inside its update() the
      temporary STrack.multi_predict swap warps each track's Kalman
      state by H right after the constant-velocity predict and before
@@ -23,9 +24,7 @@ Per frame:
 
 Per-call GMC diagnostics (n_keypoints / n_matches / n_inliers /
 fallback) are exposed on `.last_gmc_stats` so the runner can log how
-often the estimator engages vs. falls back to identity -- the
-diagnostic for the low-texture-thermal-IR failure mode flagged at
-design time.
+often the estimator engages vs. falls back to identity.
 
 One wrapper instance tracks one sequence. Both the tracker AND the GMC
 estimator are stateful (the GMC holds the previous frame's keypoints),
@@ -53,21 +52,20 @@ class ByteTrackCMCWrapper:
     """
     Per-sequence ByteTrack-with-CMC wrapper.
 
-    Constructor parameters mirror ByteTrackWrapper's tracker args,
-    plus GMC hyperparameters with sensible defaults matching the
-    validated estimator. All GMC defaults are tunable per run.
+    Constructor parameters mirror ByteTrackWrapper's tracker args, plus
+    GMC hyperparameters (all validated defaults from gmc.py). Defaults
+    are tuned for the Anti-UAV v4 thermal-IR regime; see gmc.py for the
+    rationale on each.
 
-    Tracker args (paper defaults; baseline uses track_thresh=0.3):
+    Tracker args (baseline uses track_thresh=0.3):
         track_thresh, track_buffer, match_thresh, mot20, frame_rate
 
-    GMC args (validated defaults):
-        gmc_downscale            : 2
-        gmc_n_features           : 1000
-        gmc_ratio                : 0.75    (Lowe ratio-test threshold)
-        gmc_ransac_reproj_thresh : 3.0     (pixels, downscaled space)
-        gmc_min_matches          : 10      (attempt-fit threshold)
-        gmc_min_inliers          : 6       (trust-fit threshold)
-        gmc_det_mask_margin      : 0.0     (no padding around det boxes)
+    GMC args:
+        gmc_downscale, gmc_n_features, gmc_ratio,
+        gmc_ransac_reproj_thresh, gmc_min_matches, gmc_min_inliers,
+        gmc_det_mask_margin
+        gmc_use_clahe, gmc_clahe_clip_limit, gmc_clahe_tile_grid_size,
+        gmc_fast_threshold, gmc_mask_conf_threshold
     """
 
     def __init__(
@@ -78,7 +76,7 @@ class ByteTrackCMCWrapper:
         match_thresh: float = 0.8,
         mot20: bool         = False,
         frame_rate: int     = 30,
-        # --- GMC args -------------------------------------------------
+        # --- GMC core args -------------------------------------------
         gmc_downscale: int  = 2,
         gmc_n_features: int = 1000,
         gmc_ratio: float    = 0.75,
@@ -86,6 +84,12 @@ class ByteTrackCMCWrapper:
         gmc_min_matches: int = 10,
         gmc_min_inliers: int = 6,
         gmc_det_mask_margin: float = 0.0,
+        # --- GMC thermal-IR-tuned args -------------------------------
+        gmc_use_clahe: bool = True,
+        gmc_clahe_clip_limit: float = 2.0,
+        gmc_clahe_tile_grid_size: tuple = (8, 8),
+        gmc_fast_threshold: int = 7,
+        gmc_mask_conf_threshold: float = 0.5,
     ):
         args = SimpleNamespace(
             track_thresh=track_thresh,
@@ -102,6 +106,11 @@ class ByteTrackCMCWrapper:
             min_matches=gmc_min_matches,
             min_inliers=gmc_min_inliers,
             det_mask_margin=gmc_det_mask_margin,
+            use_clahe=gmc_use_clahe,
+            clahe_clip_limit=gmc_clahe_clip_limit,
+            clahe_tile_grid_size=gmc_clahe_tile_grid_size,
+            fast_threshold=gmc_fast_threshold,
+            mask_conf_threshold=gmc_mask_conf_threshold,
         )
         self.last_gmc_stats: dict = {}
 
@@ -129,7 +138,6 @@ class ByteTrackCMCWrapper:
             Active tracks at this frame with assigned track_id and
             current bounding box (top-left + width + height).
         """
-        # Normalize the detections array shape.
         if detections.size == 0:
             detections = np.empty((0, 5), dtype=np.float32)
         else:
@@ -140,9 +148,8 @@ class ByteTrackCMCWrapper:
                     f"[x1, y1, x2, y2, conf]; got {detections.shape}"
                 )
 
-        # Estimate camera motion from the frame. GMC.apply slices the
-        # first 4 columns internally, so passing the full (N, 5) array
-        # is fine; it also handles the empty case (returns identity).
+        # Estimate camera motion from the frame. GMC handles the empty-
+        # detection case internally (returns identity).
         H = self.gmc.apply(frame, detections)
         self.last_gmc_stats = self.gmc.last_stats
 
