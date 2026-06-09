@@ -30,11 +30,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from analyze_tracking import load_detailed, split_combined, to_metrics  # noqa: E402
 
 # Canonical tracker order + human-readable labels for tables and legends.
-ORDER = ["bytetrack_t030", "bytetrack_t040", "bytetrack_t050", "deepsort"]
+ORDER = ["bytetrack_t030", "bytetrack_t040", "bytetrack_t050",
+         "bytetrack_cmc", "deepsort"]
 LABELS = {
     "bytetrack_t030": "ByteTrack (\u03c4=0.3)",
     "bytetrack_t040": "ByteTrack (\u03c4=0.4)",
     "bytetrack_t050": "ByteTrack (\u03c4=0.5)",
+    "bytetrack_cmc": "ByteTrack+CMC",
     "deepsort": "DeepSORT",
 }
 # Colourblind-friendly (Okabe-Ito), one per tracker.
@@ -42,6 +44,7 @@ COLORS = {
     "bytetrack_t030": "#0072B2",
     "bytetrack_t040": "#009E73",
     "bytetrack_t050": "#E69F00",
+    "bytetrack_cmc": "#CC79A7",
     "deepsort": "#D55E00",
 }
 
@@ -136,12 +139,28 @@ def plot_hota_decomposition(combined: pd.DataFrame, out: Path) -> Path:
     """
     trackers = ordered_trackers(combined)
     df = combined.set_index("tracker").loc[trackers]
+    det_vals = df["DetA"].to_numpy()
+    ass_vals = df["AssA"].to_numpy()
+    hota_vals = df["HOTA"].to_numpy()
 
-    xlim, ylim = (53.0, 70.0), (41.0, 48.0)
+    # Auto axes: pad each range proportionally, with a minimum floor so very
+    # tight clusters still leave room for labels. Works for any tracker set.
+    def _lim(arr, floor=2.5, frac=0.18):
+        rng = float(arr.max() - arr.min())
+        pad = max(floor, rng * frac)
+        return (float(arr.min()) - pad, float(arr.max()) + pad)
+    xlim, ylim = _lim(det_vals), _lim(ass_vals)
+
     fig, ax = plt.subplots(figsize=(7.5, 6))
 
+    # Iso-HOTA curves: ~4-5 integer levels spanning the data range.
+    lo = int(np.floor(hota_vals.min() - 1))
+    hi = int(np.ceil(hota_vals.max() + 1))
+    step = max(2, (hi - lo) // 4)
+    levels = list(range(lo, hi + 1, step))
+
     det = np.linspace(*xlim, 300)
-    for level in [50, 52, 54, 56]:
+    for level in levels:
         ass = level ** 2 / det
         ax.plot(det, ass, color="0.82", lw=1, zorder=1)
         x_lab = level ** 2 / ylim[1]  # where the curve exits the top
@@ -156,6 +175,7 @@ def plot_hota_decomposition(combined: pd.DataFrame, out: Path) -> Path:
         "deepsort": (10, -34, "left"),
         "bytetrack_t040": (-12, 20, "right"),
         "bytetrack_t050": (14, 8, "left"),
+        "bytetrack_cmc": (14, 24, "left"),
     }
     for t in trackers:
         d, a, h = df.loc[t, "DetA"], df.loc[t, "AssA"], df.loc[t, "HOTA"]
@@ -200,7 +220,10 @@ def plot_thresh_sweep(combined: pd.DataFrame, out: Path) -> Path:
     only a marginal association gain, so HOTA falls and 0.3 is the best operating
     point. DeepSORT is excluded - it has no threshold sweep.
     """
-    sub = combined[combined["tracker"].str.startswith("bytetrack")].copy()
+    # Only the threshold-sweep ByteTrack variants (bytetrack_t<NNN>) belong
+    # here; CMC or other variants must be excluded.
+    sweep_pat = re.compile(r"^bytetrack_t\d+$")
+    sub = combined[combined["tracker"].str.match(sweep_pat)].copy()
     sub["thresh"] = sub["tracker"].map(_thresh_from_name)
     sub = sub.sort_values("thresh")
     x = sub["thresh"].to_numpy()
@@ -319,7 +342,9 @@ def sequence_density(labels_root: Path) -> dict[str, float]:
 
 
 def plot_per_sequence(per_seq: pd.DataFrame, density: dict[str, float],
-                      out: Path, primary: str = "bytetrack_t030") -> Path | None:
+                      out: Path, primary: str = "bytetrack_t030",
+                      xlabel: str = "Mean UAV count per frame (sequence density)"
+                      ) -> Path | None:
     """Scatter per-sequence HOTA vs density (primary tracker), binned by tercile.
 
     Makes the density effect legible: HOTA degrades as the mean UAV count per
@@ -356,7 +381,7 @@ def plot_per_sequence(per_seq: pd.DataFrame, density: dict[str, float],
                 textcoords="offset points", xytext=(7, -2), fontsize=8,
                 color="0.3")
 
-    ax.set_xlabel("Mean UAV count per frame (sequence density)")
+    ax.set_xlabel(xlabel)
     ax.set_ylabel("HOTA (0\u2013100)")
     ax.set_title(f"Per-sequence HOTA vs density \u2014 {LABELS.get(primary, primary)}")
     ax.legend(frameon=False, title="density")
@@ -395,7 +420,19 @@ def main() -> None:
     plot_hota_decomposition(combined, args.out)
     plot_thresh_sweep(combined, args.out)
     density = sequence_density(args.labels)
-    plot_per_sequence(per_seq, density, args.out)
+    if density:
+        plot_per_sequence(per_seq, density, args.out)
+    else:
+        # Fallback: no per-frame labels found - use distinct UAVs per sequence
+        # (GT_IDs) from the metrics CSV as the density measure.
+        prim = per_seq[per_seq["tracker"] == "bytetrack_t030"]
+        if "GT_IDs" in prim.columns:
+            gt_density = dict(zip(prim["seq"], prim["GT_IDs"]))
+            print("[per-seq] using GT_IDs (distinct UAVs/seq) as density fallback")
+            plot_per_sequence(per_seq, gt_density, args.out,
+                              xlabel="Distinct UAVs per sequence (GT_IDs)")
+        else:
+            print("[per-seq] no density source available - skipping plot")
 
 
 if __name__ == "__main__":
