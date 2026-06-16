@@ -4,6 +4,16 @@
 data/
 outputs/
 
+# But keep these folders and their contents
+!outputs/yolov8s/
+!outputs/yolov8s/**
+
+!outputs/yolox_s/
+!outputs/yolox_s/**
+
+!outputs/fps/
+!outputs/fps/**
+
 # ─────────────────────────────────────────
 # PYTHON
 # ─────────────────────────────────────────
