@@ -5,7 +5,7 @@ Inspects the Anti-UAV v4 Track 3 dataset structure.
 Reports sequence counts, paired files, and per-sequence statistics.
 
 Usage:
-    python scripts/inspect_dataset.py --data_root "C:/UAV Detection and Tracking/MultiUAV_Train"
+    python scripts/inspect_dataset.py --data_root "D:\drone detection tracking\MultiUAV_Train"
 """
 
 import argparse
