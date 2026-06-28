@@ -202,10 +202,20 @@ def make_tracker_bytetrack_cmc(track_thresh: float = 0.3):
     return update
 
 
-def make_tracker_deepsort():
+def make_tracker_deepsort(embedder_gpu: bool = False):
+    """DeepSORT with MobileNet appearance embedder.
+
+    embedder_gpu defaults to False, matching the configuration used for the
+    accuracy TrackEval evaluation. When True, the embedder runs on GPU with
+    half-precision (FP16) - this is the canonical "use GPU optimally" combo
+    for deep-sort-realtime, and is intended as a paper ablation to test
+    whether GPU acceleration of the per-detection CNN forward pass changes
+    DeepSORT's deployability verdict.
+    """
     from deep_sort_realtime.deepsort_tracker import DeepSort
+    # half is unused when embedder_gpu=False; paired with True for FP16 GPU.
     trk = DeepSort(max_age=30, n_init=3, embedder="mobilenet",
-                   embedder_gpu=False, half=False)
+                   embedder_gpu=embedder_gpu, half=embedder_gpu)
 
     def update(dets, img):
         if len(dets) == 0:
@@ -354,6 +364,12 @@ def main() -> None:
     parser.add_argument("--exp-file", type=Path,
                         default=Path("configs/yolox_uav_s.py"),
                         help="YOLOX EXP config (used only for --detector yolox)")
+    parser.add_argument("--deepsort-embedder-gpu", action="store_true",
+                        help="Run DeepSORT's MobileNet embedder on GPU "
+                             "(ablation; default False matches the accuracy "
+                             "evaluation config). When set, output rows are "
+                             "labeled 'deepsort_embgpu' to keep the canonical "
+                             "deepsort rows distinct.")
     args = parser.parse_args()
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -363,9 +379,17 @@ def main() -> None:
 
     seq = find_sequence(args.images_root, args.sequence)
     n_total = args.num_frames + args.warmup
+
+    # Output label distinguishes the DeepSORT embedder-on-GPU ablation from the
+    # canonical embedder-on-CPU run, so the new row doesn't collide in
+    # summary.csv (and plot_fps's drop_duplicates won't merge them).
+    tracker_label = args.tracker
+    if args.tracker == "deepsort" and args.deepsort_embedder_gpu:
+        tracker_label = "deepsort_embgpu"
+
     print(f"Device     : {device}")
     print(f"Detector   : {args.detector}  ({weights})")
-    print(f"Tracker    : {args.tracker}")
+    print(f"Tracker    : {tracker_label}")
     print(f"Sequence   : {seq}  ({args.num_frames} measured + {args.warmup} warmup frames)")
 
     frames = load_frames(args.images_root, seq, n_total)
@@ -384,7 +408,7 @@ def main() -> None:
     elif args.tracker == "bytetrack_cmc":
         update_fn = make_tracker_bytetrack_cmc()
     elif args.tracker == "deepsort":
-        update_fn = make_tracker_deepsort()
+        update_fn = make_tracker_deepsort(embedder_gpu=args.deepsort_embedder_gpu)
     else:
         update_fn = None
 
@@ -397,8 +421,8 @@ def main() -> None:
     e2e_s = summarize(total_ms, "end-to-end")
 
     write_outputs(det_ms, trk_ms, det_s, trk_s, e2e_s,
-                  args.detector, args.tracker, device, args.out)
-    print_summary(det_s, trk_s, e2e_s, args.detector, args.tracker, device)
+                  args.detector, tracker_label, device, args.out)
+    print_summary(det_s, trk_s, e2e_s, args.detector, tracker_label, device)
 
 
 if __name__ == "__main__":
